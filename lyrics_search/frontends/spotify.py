@@ -164,7 +164,7 @@ def export(query, playlist_name, track_infos, create_playlist=True):
 def create_playlist_description(query):
     repo_url = os.getenv("LR_REPO_URL", "<none>")
     return (
-        f"'{query}' playlist! Created via an automated script; author does not endorse contents. "
-        f"Sorted in rough order of '{query}'-ness. "
+        f"{query} playlist! Created via an automated script; author does not endorse contents. "
+        f"Sorted in rough order of {query}-ness. "
         f"See {repo_url} for more details."
     )
