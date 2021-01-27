@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "lyrics_search"
+version = "0.1.0"
+description = "CLI tool to generate playlists of songs whose lyrics contain a given query"
+authors = ["Thomas Chamberlin <thomaswchamberlin@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/tchamberlin/lyrics_search"
+keywords = ["lyrics"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+python-dotenv = "^0.15.0"
+spotipy = "^2.16.1"
+pycld3 = "^0.20"
+tqdm = "^4.56.0"
+
+[tool.poetry.dev-dependencies]
+ipython = "^7.19.0"
+ipdb = "^0.13.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+# Create a lyrics_search wrapper scripts that executes lyrics_search.lyrics_search
+lyrics-search = 'lyrics_search:lyrics_search.main'
+
+[tool.isort]
+# See: https://pycqa.github.io/isort/docs/configuration/options/#example-pyprojecttoml
+profile = "black"
+# vert-hanging -- for black compatibility
+multi_line_output = 3
