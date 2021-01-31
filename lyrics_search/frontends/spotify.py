@@ -1,12 +1,25 @@
 import logging
+import math
 import os
+import string
 from collections import OrderedDict
+from datetime import datetime
 
 import spotipy
+from fuzzywuzzy import fuzz
 from spotipy.oauth2 import SpotifyClientCredentials
 from tqdm import tqdm
+from unidecode import unidecode
 
-from lyrics_search.utils import chunks, yes_no_prompt
+from lyrics_search.filters import contains_banned_word
+from lyrics_search.normalize import PARENTHETICAL_REGEX
+from lyrics_search.utils import (
+    choices_prompt,
+    chunks,
+    load_json,
+    normalize_query,
+    save_json,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,36 +35,76 @@ if not _token:
 USER_SPOTIFY = spotipy.Spotify(auth=_token)
 USER_SPOTIFY.trace = False
 
-
-def spotify_add_tracks_to_playlist(playlist_id, track_ids):
-    # Spotify won't allow us to add more than 100 tracks at a time
-    track_chunks = chunks(track_ids, 100)
-    for i, track_chunk in enumerate(track_chunks, 1):
-        USER_SPOTIFY.user_playlist_add_tracks(
-            user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=track_chunk
-        )
+# Spotify won't allow us to add more than 100 tracks at a time
+SPOTIFY_MAX_CHUNK_SIZE = 100
+# Spotify search will return a max of 50 items at a time
+SPOTIFY_API_SEARCH_LIMIT = 50
+SPOTIFY_API_RESULTS_LIMIT = 2000
 
 
-def spotify_delete_existing_playlists(playlist_name, no_input=False):
-    playlists = get_spotify_user_playlists()
-    existing_playlists = [
-        playlist for playlist in playlists if playlist_name == playlist["name"]
-    ]
-    if existing_playlists and not no_input:
-        print("The following playlists already exist with the same name:")
-        for p in existing_playlists:
-            print(f"  {p['name']} ({p['id']}): {p['tracks']['total']} tracks")
-        if not yes_no_prompt(
-            "Do you want to delete all of the above playlists and create a new one?"
-        ):
-            return False
+def spotify_add_tracks_to_playlist(playlist, track_ids, replace_existing=True):
+    playlist_id = playlist["id"]
+    _enumerate_start = 1
+    track_chunks = chunks(track_ids, SPOTIFY_MAX_CHUNK_SIZE)
+    for i, track_chunk in enumerate(track_chunks, _enumerate_start):
+        if replace_existing and i == _enumerate_start:
+            snapshot = USER_SPOTIFY.user_playlist_replace_tracks(
+                user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=track_chunk
+            )
+            LOGGER.debug(
+                f"Replaced all tracks in playlist {playlist_id}; "
+                f"added {len(track_chunk)} tracks"
+            )
+        else:
+            snapshot = USER_SPOTIFY.user_playlist_add_tracks(
+                user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=track_chunk
+            )
+            LOGGER.debug(
+                f"Added {len(track_chunk)} tracks to playlist {playlist['name']}"
+            )
 
-    for playlist in existing_playlists:
+    return snapshot
+
+
+def delete_playlists(playlist_infos):
+    for playlist in playlist_infos:
         USER_SPOTIFY.user_playlist_unfollow(SPOTIFY_USER_ID, playlist["id"])
         LOGGER.debug(f"Deleted playlist {playlist['name']} ({playlist['id']})")
 
 
-def create_spotify_playlist(query, playlist_name, track_ids):
+def spotify_get_existing_playlist(playlist_name, no_input=False):
+    playlists = get_spotify_user_playlists()
+    existing_playlists = [
+        playlist for playlist in playlists if playlist_name == playlist["name"]
+    ]
+    num_existing_playlists = len(existing_playlists)
+    if num_existing_playlists > 1 and not no_input:
+        print("The following playlists already exist with the same name:")
+        choices = list(enumerate(existing_playlists, 1))
+        for num, playlist in choices:
+            print(
+                f"  {num}) {playlist['name']} ({playlist['id']}): "
+                f"{playlist['tracks']['total']} tracks"
+            )
+
+        choice = choices_prompt(
+            "Which playlist would you like to use (will replace its entire "
+            "contents with the new tracks)?",
+            choices=[c for c in choices[0]],
+        )
+        # Choice is 1-indexed so we must subtract 1
+        playlist = existing_playlists[choice - 1]
+    elif num_existing_playlists == 1:
+        LOGGER.debug(f"Exactly 1 existing playlist named {playlist_name}")
+        playlist = existing_playlists[0]
+    else:
+        LOGGER.debug(f"No existing playlist(s) named {playlist_name}")
+        playlist = None
+
+    return playlist
+
+
+def create_spotify_playlist(query, playlist_name, track_ids, replace_existing=True):
     """Create Spotify playlist of given name, with given tracks."""
 
     if len(track_ids) == 0:
@@ -60,22 +113,21 @@ def create_spotify_playlist(query, playlist_name, track_ids):
             "No changes have been made."
         )
 
-    do_continue = True
-    do_continue = spotify_delete_existing_playlists(playlist_name)
+    playlist = spotify_get_existing_playlist(playlist_name)
 
-    if do_continue:
-        create_playlist_result = USER_SPOTIFY.user_playlist_create(
+    if playlist is None:
+        playlist = USER_SPOTIFY.user_playlist_create(
             SPOTIFY_USER_ID,
             name=playlist_name,
             public=False,
             description=create_playlist_description(query),
         )
+
         tqdm.write(f"Created playlist {playlist_name}")
-        spotify_add_tracks_to_playlist(create_playlist_result["id"], track_ids)
-        tqdm.write(
-            f"Successfully created playlist {playlist_name} and exported "
-            f"{len(to_add)}/{len(track_infos)} tracks "
-        )
+
+    return spotify_add_tracks_to_playlist(
+        playlist, track_ids, replace_existing=replace_existing
+    )
 
 
 def get_spotify_user_playlists(limit=50):
@@ -97,7 +149,7 @@ def get_spotify_user_playlists(limit=50):
 def search_spotify_for_track(artist, track):
     query = f"{artist} {track}"
     LOGGER.debug(f"Querying for {query}")
-    results = SPOTIPY.search(q=query, type="track", limit=50)
+    results = SPOTIPY.search(q=query, limit=50)
     num_results = results["tracks"]["total"]
     LOGGER.debug(f"Found {num_results} results")
 
@@ -117,7 +169,11 @@ def search_spotify_for_track(artist, track):
     return item
 
 
-def export(query, playlist_name, track_infos, create_playlist=True):
+def sort_playlist(playlist, key):
+    """Sort the given Spotify `playlist` by `key`"""
+
+
+def get_track_ids(track_infos):
     results = OrderedDict()
     to_add = {}
     # Create a set of each unique artist/track name pair. Use the "cleaned" track name (this
@@ -148,17 +204,7 @@ def export(query, playlist_name, track_infos, create_playlist=True):
             "spotify": formatted_item,
         }
 
-    if create_playlist:
-        create_spotify_playlist(
-            query=query,
-            playlist_name=playlist_name,
-            track_ids=list(to_add.keys()),
-        )
-
-    else:
-        LOGGER.debug(f"Skipping creation of Spotify playlist '{playlist_name}'")
-
-    return to_add, results
+    return list(results.keys())
 
 
 def create_playlist_description(query):
@@ -168,3 +214,243 @@ def create_playlist_description(query):
         f"Sorted in rough order of {query}-ness. "
         f"See {repo_url} for more details."
     )
+
+
+def spotify_deep_search(query):
+    # TODO: Inefficient!
+    initial_results = SPOTIPY.search(q=f"track:{query}", type="track", limit=1)
+    all_results = []
+    if initial_results["tracks"]["total"] > SPOTIFY_API_RESULTS_LIMIT:
+        for year in tqdm(range(2010, datetime.now().year), unit="year", position=1):
+            LOGGER.info(f"{year=}")
+            for char in tqdm(string.ascii_lowercase, unit="char", position=2):
+                LOGGER.info(f"{char=}")
+                results = search_spotify(f"track:{query} year:{year} artist:{char}*")
+                all_results.extend(results)
+
+    return all_results
+
+
+def spotify_shallow_search(query):
+    return search_spotify(f"track:{query}")
+
+
+def search_spotify(
+    query,
+    type_="track",
+    max_results=None,
+    limit=SPOTIFY_API_SEARCH_LIMIT,
+    **kwargs,
+):
+    all_items = []
+    results = SPOTIPY.search(q=query, type=type_, limit=limit, **kwargs)
+    all_items.extend(results["tracks"]["items"])
+    total = results["tracks"]["total"]
+    if max_results is not None and total > max_results:
+        LOGGER.debug(f"Limiting results from {total=} to {max_results=}")
+        total = max_results
+    num_pages = math.ceil(total / limit)
+    LOGGER.debug(
+        f"Total {total} results across {num_pages} pages of {limit} results each"
+    )
+    max_pages = math.ceil(SPOTIFY_API_RESULTS_LIMIT / limit)
+    if num_pages > max_pages:
+        LOGGER.debug(f"Limiting pages from {num_pages=} to {max_pages=}")
+        num_pages = max_pages
+    offset = limit
+    for page in tqdm(range(1, num_pages + 1), initial=1, unit="page", position=0):
+        if offset >= SPOTIFY_API_RESULTS_LIMIT:
+            LOGGER.warning(
+                f"Reach Spotify API Offset limit of {SPOTIFY_API_RESULTS_LIMIT}; exiting"
+            )
+            break
+        LOGGER.debug(f"Fetching page {page} ({offset=})")
+        results = SPOTIPY.search(
+            q=query, type=type_, offset=offset, limit=limit, **kwargs
+        )
+        all_items.extend(results["tracks"]["items"])
+        offset = page * limit
+
+    return all_items
+
+
+def normalize_track_field(value):
+    normalized = PARENTHETICAL_REGEX.sub("", value).strip().lower()
+    try:
+        feat_start = normalized.index("feat.")
+    except ValueError:
+        pass
+    else:
+        normalized = normalized[:feat_start].strip()
+
+    if normalized != value:
+        LOGGER.debug(f"Normalized value from {value=} to {normalized=}")
+    return normalized
+
+
+def filter_results(query, items, fast=True):
+    filtered = []
+    query = unidecode(query.lower())
+    for item in items:
+        track = unidecode(item["name"]).lower()
+        album = unidecode(item["album"]["name"]).lower()
+        artists = [unidecode(a["name"]).lower() for a in item["artists"]]
+        clean_track = normalize_track_field(track)
+        # if "faceira" in clean_track.lower():
+        #     breakpoint()
+
+        track_contains_query = (
+            query in clean_track
+            or fuzz.partial_token_sort_ratio(query, clean_track) > 85
+        )
+        filters = (
+            (
+                "banned_word_in_artist_field",
+                [artist for artist in artists if contains_banned_word(artist)],
+            ),
+            ("banned_word_in_album_field", contains_banned_word(album)),
+            ("banned_word_in_track_field", contains_banned_word(clean_track)),
+            ("track_does_not_contain_query", not track_contains_query),
+            (
+                "artist_name_contains_query",
+                (
+                    # If the track name doesn't contain the query,
+                    not track_contains_query
+                    # AND one of the arists does, then evaluate to True
+                    and any(artist for artist in artists if query in artist)
+                ),
+            ),
+            (
+                "album_name_contains_query",
+                (
+                    # If the track name doesn't contain the query,
+                    not track_contains_query
+                    # AND the album does, then evaluate to True
+                    and query in album
+                ),
+            ),
+            (
+                "artist_name_fuzzy_matches_query",
+                (
+                    not track_contains_query
+                    # AND one of the arists does, then evaluate to True
+                    and any(
+                        artist
+                        for artist in artists
+                        if fuzz.partial_token_sort_ratio(query, artist) > 85
+                    )
+                ),
+            ),
+            (
+                "album_name_contains_query",
+                (
+                    # If the track name doesn't contain the query,
+                    not track_contains_query
+                    # AND the album does, then evaluate to True
+                    and fuzz.partial_token_sort_ratio(query, album) > 85
+                ),
+            ),
+        )
+
+        if fast:
+            do_add = not any(v for k, v in filters)
+        else:
+            filters = dict(filters)
+            do_add = not any(filters.values())
+            filters = filters.items()
+        if do_add:
+            filtered.append(item)
+        else:
+            LOGGER.info(
+                f"Filtered out '{format_item(item)}' due to: "
+                f"{[k for k, v in filters if v]}"
+            )
+
+    return filtered
+
+
+def format_item(item):
+    artists = ", ".join([a["name"] for a in item["artists"]])
+    return f"{artists} | {item['album']['name']} | {item['name']}"
+
+
+def order_by_key(iterable_of_dicts, order_by):
+    if order_by.startswith("-"):
+        reverse = True
+        order_by = order_by[1:]
+    else:
+        reverse = False
+
+    return sorted(iterable_of_dicts, key=lambda item: item[order_by], reverse=reverse)
+
+
+def gen_spotify_search_results_json_path(output_path, normalized_query):
+    return output_path / f"{normalized_query}_spotify_search_results.json"
+
+
+def search_and_filter(
+    query, output_path, order_by="-popularity", fast=True, deep=False
+):
+    normalized_query = normalize_query(query)
+    spotify_search_results_json_path = gen_spotify_search_results_json_path(
+        output_path, normalized_query
+    )
+
+    if not spotify_search_results_json_path.exists():
+        LOGGER.debug(f"Searching Spotify for '{query}'...")
+        if deep:
+            spotify_search_results = spotify_deep_search(query)
+        else:
+            spotify_search_results = spotify_shallow_search(query)
+        save_json(spotify_search_results, spotify_search_results_json_path)
+    else:
+        LOGGER.debug(
+            "Skipping Spotify search; results are cached at "
+            f"'{spotify_search_results_json_path}'"
+        )
+        spotify_search_results = load_json(spotify_search_results_json_path)
+
+    filtered = filter_results(query, spotify_search_results, fast=fast)
+    deduped = remove_duplicates(query, filtered)
+    return order_by_key(deduped, order_by)
+
+
+def remove_duplicates(query, items):
+    compressed = {}
+    for item in items:
+        track = normalize_track_field(item["name"])
+        # album = PARENTHETICAL_REGEX.sub("", item["album"]["name"]).strip().lower()
+        artists = tuple(
+            sorted((normalize_track_field(a["name"]) for a in item["artists"]))
+        )
+
+        key = (artists, track)
+        existing = compressed.get(key, None)
+        # If there is an existing track in `compressed`...
+        if existing:
+            do_add = False
+            # If the existing album is a single (e.g. not a compilation),
+            if existing["album"]["album_type"] == "single":
+                # AND the new item is also a single, AND the new item is more popular, we add it
+                if (
+                    item["album"]["album_type"] == "single"
+                    and item["popularity"] > existing["popularity"]
+                ):
+                    do_add = True
+            # If it is NOT a single,
+            else:
+                # AND it is more popular than the existing one, we add it
+                if item["popularity"] > existing["popularity"]:
+                    do_add = True
+
+            if do_add:
+                LOGGER.info(
+                    f"Overwriting '{format_item(existing)}' (pop. {existing['popularity']}) "
+                    f"with '{format_item(item)}' (pop. {item['popularity']})"
+                )
+                compressed[key] = item
+        else:
+            compressed[key] = item
+
+    LOGGER.debug(f"De-dup'd {len(items)=} to {len(compressed)=}")
+    return compressed.values()

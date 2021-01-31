@@ -9,6 +9,7 @@ DEFAULT_BANNED_WORDS = [
     "(live)",
     "(skit)",
     "live in",
+    "live at",
     "in the style of",
     "tribute to",
     "remix",

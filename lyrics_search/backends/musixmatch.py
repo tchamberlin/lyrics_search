@@ -1,18 +1,28 @@
 import logging
+import math
 import os
-import re
 
 import requests
 from tqdm import tqdm
 
-from lyrics_search.defaults import DEFAULT_RESULTS_PATH
+from lyrics_search.defaults import (
+    DEFAULT_ALLOWED_LANGUAGES,
+    DEFAULT_BANNED_WORDS,
+    DEFAULT_RESULTS_PATH,
+)
+from lyrics_search.filters import (
+    artist_name_contains_query,
+    contains_banned_words,
+    lyrics_are_not_in_allowed_language,
+)
+from lyrics_search.normalize import (
+    LYRICS_CRUFT_REGEX,
+    PARENTHETICAL_REGEX,
+    WHITESPACE_REGEX,
+)
 from lyrics_search.utils import load_json, normalize_query, save_json
 
 LOGGER = logging.getLogger(__name__)
-
-PARENTHETICAL_REGEX = re.compile(r"(\[.*\])?(\{.*\})?(\<.*\>)?(\(.*\))?")
-WHITESPACE_REGEX = re.compile(r"[^\w#\'\"]")
-LYRICS_CRUFT_REGEX = re.compile(r"\*+.*\*+\s+\(\d+\)")
 
 TRACK_API_URL = "http://api.musixmatch.com/ws/1.1/track.search"
 LYRIC_API_URL = "http://api.musixmatch.com/ws/1.1/track.lyrics.get"
@@ -140,7 +150,7 @@ def get_track_list(
     output_path=DEFAULT_RESULTS_PATH,
 ):
     track_list_for_page, num_available = get_track_results_page(query, page, page_size)
-    num_pages = (num_available // page_size) + 1
+    num_pages = math.ceil(num_available / page_size)
     tqdm.write(f"There are {num_available} tracks available across {num_pages} pages")
     actual_num_pages = num_pages
     if max_pages and max_pages < actual_num_pages:
@@ -187,3 +197,145 @@ def search_lyrics(
 
     track_infos = get_lyrics(query, track_list)
     return track_infos
+
+
+def search_and_filter(
+    query,
+    page=1,
+    page_size=100,
+    max_pages=50,
+    output_path=DEFAULT_RESULTS_PATH,
+    languages=DEFAULT_ALLOWED_LANGUAGES,
+    banned_words=DEFAULT_BANNED_WORDS,
+):
+    normalized_query = normalize_query(query)
+    musixmatch_search_results_json_path = (
+        output_path / f"{normalized_query}_musixmatch_search_results.json"
+    )
+    if not musixmatch_search_results_json_path.exists():
+        LOGGER.debug(f"Searching MusixMatch for '{query}'...")
+        track_infos = search_lyrics(
+            query,
+            max_pages=max_pages,
+            page_size=page_size,
+            output_path=output_path,
+        )
+        save_json(track_infos, musixmatch_search_results_json_path)
+    else:
+        LOGGER.debug(
+            "Skipping MusixMatch search; results are cached at "
+            f"'{musixmatch_search_results_json_path}'"
+        )
+        track_infos = load_json(musixmatch_search_results_json_path)
+
+    filtered_track_infos = filter_track_infos(
+        query, track_infos, banned_words=banned_words, languages=languages
+    )
+
+    return remove_duplicates(query, filtered_track_infos)
+
+
+def filter_track_infos(
+    query,
+    track_infos,
+    languages=DEFAULT_ALLOWED_LANGUAGES,
+    banned_words=DEFAULT_BANNED_WORDS,
+):
+    filtered_track_infos = []
+    for track_info in track_infos:
+        track = track_info["track"]
+        clean_track = PARENTHETICAL_REGEX.sub("", track).strip()
+        try:
+            feat_start = clean_track.lower().index("feat.")
+        except ValueError:
+            pass
+        else:
+            clean_track = clean_track[:feat_start].strip()
+
+        track_info["clean_track"] = clean_track
+        if track != clean_track:
+            LOGGER.debug(f"Cleaned {track=} to {clean_track=}")
+
+        artist = track_info["artist"]
+        clean_artist = PARENTHETICAL_REGEX.sub("", artist).strip()
+        try:
+            feat_start = clean_artist.lower().index("feat.")
+        except ValueError:
+            pass
+        else:
+            clean_artist = clean_artist[:feat_start].strip()
+
+        track_info["clean_artist"] = clean_artist
+        if artist != clean_artist:
+            LOGGER.debug(f"Cleaned {artist=} to {clean_artist=}")
+
+        clean_lyrics = (
+            LYRICS_CRUFT_REGEX.sub("", track_info["lyrics"])
+            if track_info["lyrics"]
+            else ""
+        )
+        track_info["clean_lyrics"] = clean_lyrics
+        if clean_lyrics:
+            lyrics_word_list = [
+                w.lower() for w in WHITESPACE_REGEX.split(clean_lyrics) if w
+            ]
+            len_lyrics_word_list = len(lyrics_word_list)
+            try:
+                query_index = lyrics_word_list.index(query)
+            except ValueError:
+                # LOGGER.exception(
+                #     "Failed to find query in lyrics_word_list; need to fix WHITESPACE_REGEX"
+                # )
+                track_info["lyrics_snippet"] = "<ERROR>"
+            else:
+                lyrics_word_list[query_index] = lyrics_word_list[query_index].upper()
+                start = start_ if (start_ := query_index - 5) > 0 else 0
+                end = (
+                    end_
+                    if (end_ := query_index + 5) < len_lyrics_word_list
+                    else len_lyrics_word_list
+                )
+                track_info["lyrics_snippet"] = " ".join(lyrics_word_list[start:end])
+        else:
+            track_info["lyrics_snippet"] = ""
+
+        track_name = track_info["track"].lower()
+        album_name = track_info["album"].lower()
+        artist_name = track_info["artist"].lower()
+        lyrics = track_info["clean_lyrics"].lower()
+
+        filters = {
+            "contains_banned_words": contains_banned_words(
+                track_name, artist_name, album_name, banned_words
+            ),
+            "lyrics_are_not_in_allowed_language": lyrics_are_not_in_allowed_language(
+                lyrics, languages
+            ),
+            "artist_name_contains_query": artist_name_contains_query(
+                query, artist_name
+            ),
+        }
+
+        if not any(filters.values()):
+            filtered_track_infos.append(track_info)
+        else:
+            LOGGER.info(
+                f"Filtered out '{artist_name}' '{track_name}' due to:\n"
+                f"{[k for k, v in filters.items() if v]}"
+            )
+
+    return filtered_track_infos
+
+
+def remove_duplicates(query, track_infos):
+    compressed = {}
+    for track_info in track_infos:
+        key = (track_info["artist"], track_info["clean_track"])
+        if key in compressed:
+            LOGGER.warning(f"Overwriting {compressed[key]=} with {track_info=}")
+
+        compressed[key] = track_info
+
+    LOGGER.debug(f"De-dup'd {len(track_infos)=} to {len(compressed)=}")
+
+    return sorted(compressed.values(), key=lambda x: x["score"], reverse=True)

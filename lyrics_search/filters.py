@@ -11,6 +11,11 @@ def lyrics_dont_contain_query(num_query_references):
     return num_query_references == 0
 
 
+# TODO: Fuzzy?
+def contains_banned_word(string, banned_words=DEFAULT_BANNED_WORDS):
+    return any(banned_word for banned_word in banned_words if banned_word in string)
+
+
 def contains_banned_words(
     track_name, artist_name, album_name, banned_words=DEFAULT_BANNED_WORDS
 ):

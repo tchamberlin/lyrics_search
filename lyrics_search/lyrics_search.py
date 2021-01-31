@@ -7,19 +7,10 @@ from pathlib import Path
 from tqdm import tqdm
 
 from lyrics_search.backends import musixmatch
-from lyrics_search.defaults import (
-    DEFAULT_ALLOWED_LANGUAGES,
-    DEFAULT_BANNED_WORDS,
-    DEFAULT_RESULTS_PATH,
-)
-from lyrics_search.filters import (
-    artist_name_contains_query,
-    contains_banned_words,
-    lyrics_are_not_in_allowed_language,
-)
+from lyrics_search.defaults import DEFAULT_ALLOWED_LANGUAGES, DEFAULT_RESULTS_PATH
 from lyrics_search.frontends import spotify
 from lyrics_search.handlers import TqdmLoggingHandler
-from lyrics_search.utils import load_json, normalize_query, save_json
+from lyrics_search.utils import normalize_query, save_json
 
 LOGGER = logging.getLogger(__name__)
 PARENTHETICAL_REGEX = re.compile(r"(\[.*\])?(\{.*\})?(\<.*\>)?(\(.*\))?")
@@ -27,118 +18,29 @@ WHITESPACE_REGEX = re.compile(r"[^\w#\'\"]")
 LYRICS_CRUFT_REGEX = re.compile(r"\*+.*\*+\s+\(\d+\)")
 
 
-def remove_duplicates(query, track_infos):
-    compressed = {}
-    for track_info in track_infos:
-        key = (track_info["artist"], track_info["clean_track"])
-        if key in compressed:
-            LOGGER.warning(f"Overwriting {compressed[key]=} with {track_info=}")
-
-        compressed[key] = track_info
-
-    LOGGER.debug(f"De-dup'd {len(track_infos)=} to {len(compressed)=}")
-
-    return sorted(compressed.values(), key=lambda x: x["score"], reverse=True)
-
-
-def filter_track_infos(
-    query,
-    track_infos,
-    languages=DEFAULT_ALLOWED_LANGUAGES,
-    banned_words=DEFAULT_BANNED_WORDS,
-):
-    filtered_track_infos = []
-    for track_info in track_infos:
-        track = track_info["track"]
-        clean_track = PARENTHETICAL_REGEX.sub("", track).strip()
-        try:
-            feat_start = clean_track.lower().index("feat.")
-        except ValueError:
-            pass
-        else:
-            clean_track = clean_track[:feat_start].strip()
-
-        track_info["clean_track"] = clean_track
-        if track != clean_track:
-            LOGGER.debug(f"Cleaned {track=} to {clean_track=}")
-
-        artist = track_info["artist"]
-        clean_artist = PARENTHETICAL_REGEX.sub("", artist).strip()
-        try:
-            feat_start = clean_artist.lower().index("feat.")
-        except ValueError:
-            pass
-        else:
-            clean_artist = clean_artist[:feat_start].strip()
-
-        track_info["clean_artist"] = clean_artist
-        if artist != clean_artist:
-            LOGGER.debug(f"Cleaned {artist=} to {clean_artist=}")
-
-        clean_lyrics = LYRICS_CRUFT_REGEX.sub("", track_info["lyrics"])
-        track_info["clean_lyrics"] = clean_lyrics
-        if clean_lyrics:
-            lyrics_word_list = [
-                w.lower() for w in WHITESPACE_REGEX.split(clean_lyrics) if w
-            ]
-            len_lyrics_word_list = len(lyrics_word_list)
-            try:
-                query_index = lyrics_word_list.index(query)
-            except ValueError:
-                # LOGGER.exception(
-                #     "Failed to find query in lyrics_word_list; need to fix WHITESPACE_REGEX"
-                # )
-                track_info["lyrics_snippet"] = "<ERROR>"
-            else:
-                lyrics_word_list[query_index] = lyrics_word_list[query_index].upper()
-                start = start_ if (start_ := query_index - 5) > 0 else 0
-                end = (
-                    end_
-                    if (end_ := query_index + 5) < len_lyrics_word_list
-                    else len_lyrics_word_list
-                )
-                track_info["lyrics_snippet"] = " ".join(lyrics_word_list[start:end])
-        else:
-            track_info["lyrics_snippet"] = ""
-
-        track_name = track_info["track"].lower()
-        album_name = track_info["album"].lower()
-        artist_name = track_info["artist"].lower()
-        lyrics = track_info["clean_lyrics"].lower()
-
-        filters = {
-            "contains_banned_words": contains_banned_words(
-                track_name, artist_name, album_name, banned_words
-            ),
-            "lyrics_are_not_in_allowed_language": lyrics_are_not_in_allowed_language(
-                lyrics, languages
-            ),
-            "artist_name_contains_query": artist_name_contains_query(
-                query, artist_name
-            ),
-        }
-
-        if not any(filters.values()):
-            filtered_track_infos.append(track_info)
-        else:
-            LOGGER.info(
-                f"Filtered out '{artist_name}' '{track_name}' due to:\n"
-                f"{[k for k, v in filters.items() if v]}"
-            )
-
-    return filtered_track_infos
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("query")
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--deep",
+        action="store_true",
+        help="Instead of just pulling the first 2000 results, try to get _all_ search results "
+        "via a convoluted series of more specific 'sub'-searches",
+    )
     parser.add_argument("-v", "--verbosity", choices=[0, 1, 2, 3], type=int, default=2)
     parser.add_argument(
         "--output",
         type=Path,
         help=f"Defaults to {DEFAULT_RESULTS_PATH}/<normalized_query>",
+    )
+    parser.add_argument(
+        "--max-playlist-tracks",
+        type=int,
+        help="Maximum number of tracks in output playlist",
+        default=1000,
     )
     parser.add_argument(
         "--languages",
@@ -172,55 +74,39 @@ def do_lyrics_search(
     output_path,
     do_musixmatch,
     do_spotify,
+    max_playlist_tracks,
     max_musixmatch_pages,
     max_musixmatch_page_size,
     languages,
     no_create_playlist,
+    fast,
+    deep,
 ):
     results_dict = {}
     normalized_query = normalize_query(query)
     output_path = (
         output_path if output_path else DEFAULT_RESULTS_PATH / normalized_query
     )
-    musixmatch_raw_json_path = output_path / f"{normalized_query}_musixmatch_raw.json"
+    all_track_infos = None
     if do_musixmatch:
-        musixmatch_json = musixmatch.search_lyrics(
+        all_track_infos = musixmatch.search_and_filter(
             query,
-            max_pages=max_musixmatch_pages,
-            page_size=max_musixmatch_page_size,
-            output_path=output_path,
+            page=1,
+            page_size=100,
+            max_pages=50,
+            output_path=DEFAULT_RESULTS_PATH,
         )
-        save_json(musixmatch_json, musixmatch_raw_json_path)
-
-    results_dict["argv"] = " ".join(sys.argv)
-
-    try:
-        all_track_infos = load_json(musixmatch_raw_json_path)
-    except FileNotFoundError as error:
-        raise ValueError(
-            f"MusixMatch cache file {musixmatch_raw_json_path} does not exist! "
-            "Try again with --musixmatch option"
-        ) from error
-
-    if not all_track_infos:
-        LOGGER.warning(
-            f"Successfully loaded track infos from '{musixmatch_raw_json_path}', but it's an empty "
-            "list. Consider deleting this file"
+        musixmatch_results = musixmatch.filter_track_infos(
+            query, all_track_infos, languages=languages
         )
-    filtered_track_infos = filter_track_infos(
-        query, all_track_infos, languages=languages
-    )
-    track_infos = remove_duplicates(query, filtered_track_infos)
+    elif do_spotify:
+        spotify_results = spotify.search_and_filter(
+            query, output_path, fast=fast, deep=deep
+        )
+        tqdm.write(f"{len(spotify_results)=}")
+    else:
+        raise ValueError("nope")
 
-    musixmatch_filtered_json_path = (
-        output_path / f"{normalized_query}_musixmatch_filtered.json"
-    )
-    if track_infos:
-        save_json(track_infos, musixmatch_filtered_json_path)
-
-    LOGGER.debug(
-        f"{len(all_track_infos)=}; {len(filtered_track_infos)=}; {len(track_infos)=}"
-    )
     playlist_name = name if name else f"{normalized_query}_raw"
     spotify_json_path = output_path / f"{normalized_query}_spotify.json"
     if not spotify_json_path.exists() and not spotify:
@@ -229,10 +115,32 @@ def do_lyrics_search(
             " was not given! You must provide --spotify in order to create this file"
         )
     if spotify:
-        if track_infos:
+        if spotify_results:
+            save_json(
+                [spotify.format_item(item) for item in spotify_results],
+                output_path / f"{normalized_query}_spotify_playlist.json",
+            )
+            if not no_create_playlist:
+                track_ids = [r["id"] for r in spotify_results]
+                spotify.create_spotify_playlist(
+                    query=query,
+                    playlist_name=playlist_name,
+                    track_ids=track_ids[:max_playlist_tracks]
+                    if max_playlist_tracks
+                    else track_ids,
+                    replace_existing=True,
+                )
+            else:
+                print(
+                    f"Not creating playlist '{playlist_name}' ({len(spotify_results)} tracks)"
+                )
+                # for item in spotify_results:
+                #     print(spotify.format_item(item))
+        elif track_infos:
             spotify_json, results = spotify.export(
                 query=query,
-                track_infos=track_infos,
+                # track_infos=track_infos,
+                spotify_results=spotify_results,
                 playlist_name=playlist_name,
                 create_playlist=not no_create_playlist,
             )
@@ -243,8 +151,6 @@ def do_lyrics_search(
         else:
             tqdm.write("No tracks found; nothing to export to Spotify")
             sys.exit(1)
-
-    spotify_json = load_json(spotify_json_path)
 
 
 def main():
@@ -263,10 +169,13 @@ def main():
             output_path=args.output,
             do_musixmatch=args.musixmatch,
             do_spotify=args.spotify,
+            max_playlist_tracks=args.max_playlist_tracks,
             max_musixmatch_pages=args.max_musixmatch_pages,
             max_musixmatch_page_size=args.max_musixmatch_page_size,
             languages=args.languages,
             no_create_playlist=args.no_create_playlist,
+            fast=not args.debug,
+            deep=args.deep,
         )
     except Exception as error:
         if args.verbosity > 1:

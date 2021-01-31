@@ -14,10 +14,14 @@ python-dotenv = "^0.15.0"
 spotipy = "^2.16.1"
 pycld3 = "^0.20"
 tqdm = "^4.56.0"
+fuzzywuzzy = {extras = ["speedup"], version = "^0.18.0"}
+Unidecode = "^1.1.2"
 
 [tool.poetry.dev-dependencies]
 ipython = "^7.19.0"
 ipdb = "^0.13.4"
+# NOTE: 0.18.0 breaks ipython. Once that's fixed, remove this
+jedi = "<0.18"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
