@@ -18,6 +18,7 @@ from lyrics_search.utils import (
     chunks,
     load_json,
     normalize_query,
+    order_by_key,
     save_json,
 )
 
@@ -173,9 +174,8 @@ def sort_playlist(playlist, key):
     """Sort the given Spotify `playlist` by `key`"""
 
 
-def get_track_ids(track_infos):
-    results = OrderedDict()
-    to_add = {}
+def query_spotify_from_track_infos(track_infos, order_by=None):
+    to_add = OrderedDict()
     # Create a set of each unique artist/track name pair. Use the "cleaned" track name (this
     # strips out things in parentheses, for example). This avoid unnecessecary duplicate queries
     # to spotify. NOTE: This obviously assumes that a given track title is unique per artist, which
@@ -192,19 +192,11 @@ def get_track_ids(track_infos):
         if item:
             to_add[item["id"]] = item
 
-            formatted_item = {
-                "artists": [artist["name"] for artist in item["artists"]],
-                "id": item["id"],
-                "name": item["name"],
-            }
-        else:
-            formatted_item = None
-        results[track_info["track_id"]] = {
-            "musixmatch": track_info,
-            "spotify": formatted_item,
-        }
-
-    return list(results.keys())
+    if order_by:
+        ret = order_by_key(to_add.values(), order_by)
+    else:
+        ret = to_add
+    return list(ret.values())
 
 
 def create_playlist_description(query):
@@ -374,16 +366,6 @@ def format_item(item):
     return f"{artists} | {item['album']['name']} | {item['name']}"
 
 
-def order_by_key(iterable_of_dicts, order_by):
-    if order_by.startswith("-"):
-        reverse = True
-        order_by = order_by[1:]
-    else:
-        reverse = False
-
-    return sorted(iterable_of_dicts, key=lambda item: item[order_by], reverse=reverse)
-
-
 def gen_spotify_search_results_json_path(output_path, normalized_query):
     return output_path / f"{normalized_query}_spotify_search_results.json"
 
@@ -412,7 +394,12 @@ def search_and_filter(
 
     filtered = filter_results(query, spotify_search_results, fast=fast)
     deduped = remove_duplicates(query, filtered)
-    return order_by_key(deduped, order_by)
+    ordered = order_by_key(deduped, order_by)
+    save_json(
+        [format_item(item) for item in ordered],
+        output_path / f"{normalized_query}_spotify_playlist.json",
+    )
+    return ordered
 
 
 def remove_duplicates(query, items):

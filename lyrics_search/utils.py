@@ -45,3 +45,13 @@ def choices_prompt(prompt, choices, choice_type=int):
         return choices_prompt(prompt, choices, choice_type)
 
     return response
+
+
+def order_by_key(iterable_of_dicts, order_by):
+    if order_by.startswith("-"):
+        reverse = True
+        order_by = order_by[1:]
+    else:
+        reverse = False
+
+    return sorted(iterable_of_dicts, key=lambda item: item[order_by], reverse=reverse)

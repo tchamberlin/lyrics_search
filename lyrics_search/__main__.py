@@ -1,3 +1,3 @@
-from .lyrics_search import main
+from lyrics_search.cli import main
 
 main()

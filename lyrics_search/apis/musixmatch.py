@@ -320,7 +320,7 @@ def filter_track_infos(
             filtered_track_infos.append(track_info)
         else:
             LOGGER.info(
-                f"Filtered out '{artist_name}' '{track_name}' due to:\n"
+                f"Filtered out artist:'{artist_name}' track:'{track_name}' due to: "
                 f"{[k for k, v in filters.items() if v]}"
             )
 

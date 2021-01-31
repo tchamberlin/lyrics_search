@@ -4,9 +4,13 @@ A CLI tool to generate playlists of songs whose lyrics contain a given query.
 
 ## How it Works
 
+### Lyrics Queries
+
+Currently the only lyrics API "backend" is MusixMatch. It will be used by default.
+
 ```sh
 # Generate a Spotify playlist of songs "about" marshmallows
-$ lyrics-search astronomy --musixmatch --spotify
+$ lyrics-search astronomy
 ```
 
 Here's what happens:
@@ -21,11 +25,25 @@ Here's what happens:
     * A "lyrics score" is derived via: `num_instances_of_query_in_lyrics / len_of_lyrics`
     * Those two factors are added together, and that's the score
     * Results are sorted in descending order based on score
-1. Duplicates are removed
+1. Duplicates are removed. We consider any songs with identical artist/track names to be duplicates
 1. Track album/artist/title fields are "cleaned" to increases chances of matching against Spotify. Some examples:
     * Things in brackets -- e.g. () [] {} -- are removed. These bits are often not the same between various DBs, which causes false negatives
     * Everything after an instance of "feat." in a song title is dropped
 1. Spotify API is used to match all of our cleaned results to Spotify tracks
+1. Private Spotify playlist is created with the matched tracks. A description is automatically generated.
+
+### Track Queries
+
+Optionally you can use Spotify as an API "backend", too. In this mode, the query is performed on track titles instead of their lyrics. They will be ranked by descending popularity.
+
+```sh
+lyrics-search astronomy --backend spotify
+```
+
+1. Spotify is queried for song titles containing "astronomy". Note that by default, Spotify caps search results at 2000 tracks. See `--deep` option to work around that
+1. Song titles are "cleaned" to remove "feat." and any parentheticals (this helps avoid false-positives coming from an artist name in a song title)
+1. Results are filtered to ensure that the track contains the exact query, and the artist/album do not match the query
+1. Duplicates are removed. We consider any songs with identical artist/track names to be duplicates
 1. Private Spotify playlist is created with the matched tracks. A description is automatically generated.
 
 ## Usage
