@@ -55,3 +55,9 @@ def order_by_key(iterable_of_dicts, order_by):
         reverse = False
 
     return sorted(iterable_of_dicts, key=lambda item: item[order_by], reverse=reverse)
+
+
+def load_word_list(path):
+    with open(path) as file:
+        contents = file.read()
+    return contents.splitlines()

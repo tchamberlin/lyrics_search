@@ -45,24 +45,21 @@ SPOTIFY_API_RESULTS_LIMIT = 2000
 
 def spotify_add_tracks_to_playlist(playlist, track_ids, replace_existing=True):
     playlist_id = playlist["id"]
-    _enumerate_start = 1
+    if replace_existing:
+        snapshot = USER_SPOTIFY.user_playlist_replace_tracks(
+            user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=[]
+        )
+        LOGGER.debug(
+            f"Deleted all tracks in playlist {playlist['name']!r} ({playlist_id!r})"
+        )
     track_chunks = chunks(track_ids, SPOTIFY_MAX_CHUNK_SIZE)
-    for i, track_chunk in enumerate(track_chunks, _enumerate_start):
-        if replace_existing and i == _enumerate_start:
-            snapshot = USER_SPOTIFY.user_playlist_replace_tracks(
-                user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=track_chunk
-            )
-            LOGGER.debug(
-                f"Replaced all tracks in playlist {playlist_id}; "
-                f"added {len(track_chunk)} tracks"
-            )
-        else:
-            snapshot = USER_SPOTIFY.user_playlist_add_tracks(
-                user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=track_chunk
-            )
-            LOGGER.debug(
-                f"Added {len(track_chunk)} tracks to playlist {playlist['name']}"
-            )
+    for track_chunk in track_chunks:
+        snapshot = USER_SPOTIFY.user_playlist_add_tracks(
+            user=SPOTIFY_USER_ID, playlist_id=playlist_id, tracks=track_chunk
+        )
+        LOGGER.debug(
+            f"Added {len(track_chunk)} tracks to playlist {playlist['name']!r}"
+        )
 
     return snapshot
 
@@ -105,7 +102,9 @@ def spotify_get_existing_playlist(playlist_name, no_input=False):
     return playlist
 
 
-def create_spotify_playlist(query, playlist_name, track_ids, replace_existing=True):
+def create_spotify_playlist(
+    query, playlist_name, track_ids, replace_existing=True, description=None
+):
     """Create Spotify playlist of given name, with given tracks."""
 
     if len(track_ids) == 0:
@@ -114,21 +113,25 @@ def create_spotify_playlist(query, playlist_name, track_ids, replace_existing=Tr
             "No changes have been made."
         )
 
+    if description is None:
+        description = create_playlist_description(query)
     playlist = spotify_get_existing_playlist(playlist_name)
 
     if playlist is None:
         playlist = USER_SPOTIFY.user_playlist_create(
-            SPOTIFY_USER_ID,
-            name=playlist_name,
-            public=False,
-            description=create_playlist_description(query),
+            SPOTIFY_USER_ID, name=playlist_name, public=False, description=description
         )
 
-        tqdm.write(f"Created playlist {playlist_name}")
-
-    return spotify_add_tracks_to_playlist(
+        tqdm.write(f"Creating playlist {playlist_name!r}")
+    else:
+        tqdm.write(f"Replacing existing playlist {playlist_name!r}")
+        USER_SPOTIFY.user_playlist_change_details(
+            SPOTIFY_USER_ID, playlist["id"], description=description
+        )
+    spotify_add_tracks_to_playlist(
         playlist, track_ids, replace_existing=replace_existing
     )
+    return playlist["id"]
 
 
 def get_spotify_user_playlists(limit=50):
@@ -223,6 +226,31 @@ def spotify_deep_search(query):
     return all_results
 
 
+def spotify_deep_search_lazy(query):
+    cleaned_query = unidecode(query)
+    # TODO: Inefficient!
+    initial_results = SPOTIPY.search(
+        q=f"track:{query} OR {cleaned_query}", type="track", limit=1
+    )
+    total_results = initial_results["tracks"]["total"]
+    if total_results > SPOTIFY_API_RESULTS_LIMIT:
+        for year in tqdm(
+            reversed(range(2010, datetime.now().year)), unit="year", position=1
+        ):
+            LOGGER.info(f"{year=}")
+            for char in tqdm(string.ascii_lowercase, unit="char", position=2):
+                LOGGER.info(f"{char=}")
+                results = search_spotify_lazy(
+                    f"track:{query} OR {cleaned_query} year:{year} artist:{char}*"
+                )
+                for result in results:
+                    yield result
+
+    else:
+        for result in search_spotify_lazy(f"track:{query}"):
+            yield result
+
+
 def spotify_shallow_search(query):
     return search_spotify(f"track:{query}")
 
@@ -288,8 +316,6 @@ def filter_results(query, items, fast=True):
         album = unidecode(item["album"]["name"]).lower()
         artists = [unidecode(a["name"]).lower() for a in item["artists"]]
         clean_track = normalize_track_field(track)
-        # if "faceira" in clean_track.lower():
-        #     breakpoint()
 
         track_contains_query = (
             query in clean_track
@@ -379,7 +405,7 @@ def search_and_filter(
     )
 
     if not spotify_search_results_json_path.exists():
-        LOGGER.debug(f"Searching Spotify for '{query}'...")
+        LOGGER.debug(f"Searching Spotify for {query!r}")
         if deep:
             spotify_search_results = spotify_deep_search(query)
         else:
@@ -440,4 +466,49 @@ def remove_duplicates(query, items):
             compressed[key] = item
 
     LOGGER.debug(f"De-dup'd {len(items)=} to {len(compressed)=}")
-    return compressed.values()
+    return list(compressed.values())
+
+
+def search_spotify_lazy(
+    query,
+    type_="track",
+    max_results=None,
+    limit=SPOTIFY_API_SEARCH_LIMIT,
+    **kwargs,
+):
+    all_items = []
+    results = SPOTIPY.search(q=query, type=type_, limit=limit, **kwargs)
+    if results is None:
+        raise ValueError("uh oh")
+    for track in results["tracks"]["items"]:
+        yield track
+    all_items.extend(results["tracks"]["items"])
+    total = results["tracks"]["total"]
+    if max_results is not None and total > max_results:
+        LOGGER.debug(f"Limiting results from {total=} to {max_results=}")
+        total = max_results
+    num_pages = math.ceil(total / limit)
+    LOGGER.debug(
+        f"Total {total} results across {num_pages} pages of {limit} results each"
+    )
+    max_pages = math.ceil(SPOTIFY_API_RESULTS_LIMIT / limit)
+    if num_pages > max_pages:
+        LOGGER.debug(f"Limiting pages from {num_pages=} to {max_pages=}")
+        num_pages = max_pages
+    offset = limit
+    for page in tqdm(range(1, num_pages + 1), initial=1, unit="page", position=0):
+        if offset >= SPOTIFY_API_RESULTS_LIMIT:
+            LOGGER.warning(
+                f"Reach Spotify API Offset limit of {SPOTIFY_API_RESULTS_LIMIT}; exiting"
+            )
+            break
+        LOGGER.debug(f"Fetching page {page} ({offset=})")
+        results = SPOTIPY.search(
+            q=query, type=type_, offset=offset, limit=limit, **kwargs
+        )
+        for track in results["tracks"]["items"]:
+            yield track
+        all_items.extend(results["tracks"]["items"])
+        offset = page * limit
+
+    return all_items

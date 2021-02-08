@@ -1,15 +1,42 @@
-# Lyrics Search
+# Playlist Sandbox
+
+Utilities for generating playlist from a variety of criteria. So far, just two:
+
+* `lyrics_search`: A module for generating playlists of songs that all contain a given word/phrase
+* `playlister`: A module for generating a playlist based on a list of words
+
+## `playlister`
+
+A module for generating a playlist based on a list of words.
+
+### Usage
+
+To create a playlist from a given sentence, pass it as a positional argument:
+
+```sh
+$ python -m lyrics_search.playlister "this will create a playlist named test!" --create-playlist --playlist-name test
+<snip>
+Final playlist:
+This Will Create A Playlist Named Test !
+```
+
+This has found a song for each word in the sentence (and the exclamation point) that exactly matches. Their actual titles are then recomposed into a playlist and printed out. So, here, we've found 7 songs, with titles: `["This", "Will", "Create", "A", "Playlist", "Named", "Test", "!"]`
+
+Results are cached at several stages on-disk to avoid hitting the API more than necessary. None of that is distributed in the repo though.
+
+
+## Lyrics Search
 
 A CLI tool to generate playlists of songs whose lyrics contain a given query.
 
-## How it Works
+### How it Works
 
-### Lyrics Queries
+#### Lyrics Queries
 
 Currently the only lyrics API "backend" is MusixMatch. It will be used by default.
 
 ```sh
-# Generate a Spotify playlist of songs "about" marshmallows
+# Generate a Spotify playlist of songs "about" astronomy
 $ lyrics-search astronomy
 ```
 
@@ -32,7 +59,7 @@ Here's what happens:
 1. Spotify API is used to match all of our cleaned results to Spotify tracks
 1. Private Spotify playlist is created with the matched tracks. A description is automatically generated.
 
-### Track Queries
+#### Track Queries
 
 Optionally you can use Spotify as an API "backend", too. In this mode, the query is performed on track titles instead of their lyrics. They will be ranked by descending popularity.
 
