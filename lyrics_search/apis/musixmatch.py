@@ -47,7 +47,8 @@ def get_lyrics_for_track(query, track):
     lyrics_response_dict = response.json()
     status_code = lyrics_response_dict["message"]["header"]["status_code"]
     if status_code != 200:
-        raise ValueError(f"Failed to query {response.url} ({status_code=})")
+        LOGGER.error(f"Failed to query {response.url} ({status_code=})")
+        return None
 
     lyrics = lyrics_response_dict["message"]["body"]["lyrics"]["lyrics_body"]
     num_query_references = lyrics.lower().count(query)
@@ -74,9 +75,7 @@ def get_lyrics_for_track(query, track):
         try:
             query_index = lyrics_word_list.index(query)
         except ValueError:
-            LOGGER.exception(
-                "Failed to find query in lyrics_word_list; need to fix WHITESPACE_REGEX"
-            )
+            LOGGER.debug("Failed to find query in lyrics_word_list")
             track_info["lyrics_snippet"] = "<ERROR>"
         else:
             lyrics_word_list[query_index] = lyrics_word_list[query_index].upper()
@@ -93,7 +92,7 @@ def get_lyrics_for_track(query, track):
 
 def get_lyrics(query, track_list):
     track_infos = []
-    for track in track_list:
+    for track in tqdm(track_list, unit="track"):
         track_info = get_lyrics_for_track(query, track)
         if track_info:
             track_infos.append(track_info)
