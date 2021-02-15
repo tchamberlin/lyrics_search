@@ -61,3 +61,16 @@ def load_word_list(path):
     with open(path) as file:
         contents = file.read()
     return contents.splitlines()
+
+
+def slicer(iterable, size):
+    for i in range(0, len(iterable) - size + 1):
+        yield (iterable[:i], iterable[i + 1 : i + size + 1], iterable[i + size + 1 :])
+
+
+def words_to_phrases(words):
+    phrases = []
+    for i, num in enumerate(words, 0):
+        for window in slicer(words, i):
+            phrases.append(window)
+    return phrases

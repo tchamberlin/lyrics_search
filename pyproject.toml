@@ -16,6 +16,7 @@ pycld3 = "^0.20"
 tqdm = "^4.56.0"
 fuzzywuzzy = {extras = ["speedup"], version = "^0.18.0"}
 Unidecode = "^1.1.2"
+inflect = "^5.0.2"
 
 [tool.poetry.dev-dependencies]
 ipython = "^7.19.0"

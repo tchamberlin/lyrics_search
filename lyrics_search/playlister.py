@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 
+import inflect
 from fuzzywuzzy import fuzz
 from tqdm import tqdm
 from unidecode import unidecode
@@ -19,6 +20,8 @@ from lyrics_search.defaults import (
 )
 from lyrics_search.handlers import TqdmLoggingHandler
 from lyrics_search.utils import load_json, save_json
+
+INFLECT = inflect.engine()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -205,20 +208,22 @@ WHITESPACE_REGEX = re.compile(r"\s+")
 
 def normalize_query(to_strip, decode=True):
     decoded = unidecode(to_strip) if decode else to_strip
+    normalized = [expand_contraction(word) for word in WHITESPACE_REGEX.split(decoded)]
+    englishified = [
+        INFLECT.number_to_words(int(word)) for word in normalized if word.isnumeric()
+    ]
+    recomposed = " ".join(englishified).strip()
     if len(to_strip) > 1:
-        no_tail = decoded[:-1] + INTER_WORD_PUNCTUATION.sub("", decoded[-1])
+        no_tail = recomposed[:-1] + INTER_WORD_PUNCTUATION.sub("", recomposed[-1])
     else:
-        no_tail = decoded
+        no_tail = recomposed
     left = INTER_WORD_PUNCTUATION_LEFT_REGEX.sub(" ", no_tail)
     right = INTER_WORD_PUNCTUATION_RIGHT_REGEX.sub(" ", left)
     # TODO: We don't actually want to do this in all cases, just when we can't find a hyphenated word!
     no_punc = right.replace("-", " ")
     # Add a space before all "allowed" punctuation in order to make them separate "words"
     yes_punc = PUNCTUATION_TO_KEEP_REGEX.sub(r" \g<0>", no_punc)
-    normalized = " ".join(
-        expand_contraction(word) for word in WHITESPACE_REGEX.split(yes_punc)
-    ).strip()
-    return normalized
+    return yes_punc
 
 
 def do_playlister(
