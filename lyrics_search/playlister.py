@@ -12,6 +12,7 @@ from unidecode import unidecode
 from lyrics_search.apis import spotify
 from lyrics_search.contractions import expand_contraction
 from lyrics_search.defaults import (
+    DEFAULT_MAX_TRACKS_PER_WORD,
     DEFAULT_PER_WORD_HARD_RESULT_LIMIT,
     DEFAULT_PER_WORD_SOFT_RESULT_LIMIT,
     DEFAULT_RESULTS_PATH,
@@ -42,7 +43,7 @@ def parse_args():
     parser.add_argument(
         "--max-tracks-per-word",
         type=int,
-        default=5,
+        default=DEFAULT_MAX_TRACKS_PER_WORD,
         help="The maximum number of tracks that will be found for each word in "
         "the query (bail out of search after this number is found)",
     )
@@ -83,7 +84,7 @@ def parse_args():
 
 def do_query_spotify(
     query,
-    max_matches=5,
+    max_matches=DEFAULT_MAX_TRACKS_PER_WORD,
     per_word_soft_result_limit=DEFAULT_PER_WORD_SOFT_RESULT_LIMIT,
     per_word_hard_result_limit=DEFAULT_PER_WORD_HARD_RESULT_LIMIT,
     allow_explicit=False,
@@ -108,60 +109,62 @@ def do_query_spotify(
         actual_results = []
         closest_match = None
         for i, result in enumerate(results):
-            cleaned_result_name = unidecode(result["name"].lower())
-            if i and i % 1000 == 0:
-                LOGGER.info(
-                    f"Found {len(exact_matches)}; closest match to {query!r} "
-                    f"so far: {closest_match}; total results analyzed: {i}"
-                )
-
-            actual_results.append(result)
-            raw_ratio = fuzz.ratio(result["name"], query)
-            cleaned_ratio = fuzz.ratio(cleaned_result_name, cleaned_query)
-            if not closest_match or closest_match[0] < cleaned_ratio:
-                closest_match = (cleaned_ratio, result["name"])
-
-            # TODO: add relaxed/fuzzy comparison as a second pass if the first doesn't find anything?
-            if cleaned_query == cleaned_result_name:
-                if not allow_explicit and result["explicit"]:
+            if result:
+                cleaned_result_name = unidecode(result["name"].lower())
+                if i and i % 500 == 0:
                     LOGGER.info(
-                        f"Skipping {result['name']} ({result['id']}); it is explicit and "
-                        "that's not allowed right now"
+                        f"Found {len(exact_matches)}; closest match to {query!r} "
+                        f"so far: {closest_match}; total results analyzed: {i}"
                     )
-                    continue
-                key = (
-                    tuple(sorted(a["name"] for a in result["artists"])),
-                    result["name"],
-                )
-                exact_matches[key] = (raw_ratio, cleaned_ratio, result)
-                if len(exact_matches) >= max_matches:
-                    LOGGER.debug(
-                        f"Found {len(exact_matches)} exact matches; bailing out!"
-                    )
-                    break
 
-                elif exact_matches and len(exact_matches) > per_word_soft_result_limit:
-                    LOGGER.debug(
-                        f"Hit {per_word_soft_result_limit=} tracks analyzed; "
-                        f"bailing out with {len(exact_matches)} exact matches!"
-                    )
-                    break
+                actual_results.append(result)
+                raw_ratio = fuzz.ratio(result["name"], query)
+                cleaned_ratio = fuzz.ratio(cleaned_result_name, cleaned_query)
+                if not closest_match or closest_match[0] < cleaned_ratio:
+                    closest_match = (cleaned_ratio, result["name"])
 
-                elif len(actual_results) > per_word_hard_result_limit:
-                    LOGGER.debug(
-                        f"Hit {per_word_hard_result_limit=} tracks analyzed; "
-                        f"bailing out with {len(exact_matches)} exact matches!"
+                # TODO: add relaxed/fuzzy comparison as a second pass if the first doesn't find anything?
+                if cleaned_query == cleaned_result_name:
+                    if not allow_explicit and result["explicit"]:
+                        LOGGER.info(
+                            f"Skipping {result['name']} ({result['id']}); it is explicit and "
+                            "that's not allowed right now"
+                        )
+                        continue
+                    key = (
+                        tuple(sorted(a["name"] for a in result["artists"])),
+                        result["name"],
                     )
-                    break
-            _s = sorted(
-                exact_matches.values(),
-                # key=lambda result: result["popularity"],
-                key=lambda result: (result[0], result[1], result[-1]["popularity"]),
-                reverse=True,
-            )
-            ret = [m[-1] for m in _s]
+                    exact_matches[key] = (raw_ratio, cleaned_ratio, result)
+                    if len(exact_matches) >= max_matches:
+                        LOGGER.debug(
+                            f"Found {len(exact_matches)} exact matches; bailing out!"
+                        )
+                        break
 
-            save_json(ret, exact_output)
+                    elif (
+                        exact_matches
+                        and len(actual_results) > per_word_soft_result_limit
+                    ):
+                        LOGGER.debug(
+                            f"Hit {per_word_soft_result_limit=} tracks analyzed; "
+                            f"bailing out with {len(exact_matches)} exact matches!"
+                        )
+                        break
+
+                    elif len(actual_results) > per_word_hard_result_limit:
+                        LOGGER.debug(
+                            f"Hit {per_word_hard_result_limit=} tracks analyzed; "
+                            f"bailing out with {len(exact_matches)} exact matches!"
+                        )
+                        break
+        _s = sorted(
+            exact_matches.values(),
+            key=lambda result: (result[0], result[1], result[-1]["popularity"]),
+            reverse=True,
+        )
+        ret = [m[-1] for m in _s]
+        save_json(ret, exact_output)
 
         save_json(actual_results, output)
     return ret
@@ -224,7 +227,7 @@ def do_playlister(
     output_path,
     no_create_playlist,
     allow_spotify=True,
-    max_matches=5,
+    max_matches=DEFAULT_MAX_TRACKS_PER_WORD,
     per_word_soft_result_limit=DEFAULT_PER_WORD_SOFT_RESULT_LIMIT,
     per_word_hard_result_limit=DEFAULT_PER_WORD_HARD_RESULT_LIMIT,
     do_normalize_query=True,

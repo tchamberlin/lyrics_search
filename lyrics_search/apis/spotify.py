@@ -40,7 +40,7 @@ USER_SPOTIFY.trace = False
 SPOTIFY_MAX_CHUNK_SIZE = 100
 # Spotify search will return a max of 50 items at a time
 SPOTIFY_API_SEARCH_LIMIT = 50
-SPOTIFY_API_RESULTS_LIMIT = 2000
+SPOTIFY_API_RESULTS_LIMIT = 1000
 
 
 def spotify_add_tracks_to_playlist(playlist, track_ids, replace_existing=True):
@@ -228,10 +228,13 @@ def spotify_deep_search(query):
 
 def spotify_deep_search_lazy(query):
     cleaned_query = unidecode(query)
-    # TODO: Inefficient!
-    initial_results = SPOTIPY.search(
-        q=f"track:{query} OR {cleaned_query}", type="track", limit=1
+    _query = (
+        f"{query} OR {cleaned_query}"
+        if query.lower() != cleaned_query.lower()
+        else query
     )
+    # TODO: Inefficient!
+    initial_results = SPOTIPY.search(q=_query, type="track", limit=1)
     total_results = initial_results["tracks"]["total"]
     if total_results > SPOTIFY_API_RESULTS_LIMIT:
         for year in tqdm(
@@ -240,8 +243,9 @@ def spotify_deep_search_lazy(query):
             LOGGER.info(f"{year=}")
             for char in tqdm(string.ascii_lowercase, unit="char", position=2):
                 LOGGER.info(f"{char=}")
+
                 results = search_spotify_lazy(
-                    f"track:{query} OR {cleaned_query} year:{year} artist:{char}*"
+                    f"track:{_query} year:{year} artist:{char}*"
                 )
                 for result in results:
                     yield result

@@ -14,6 +14,7 @@ from lyrics_search.filters import (
     artist_name_contains_query,
     contains_banned_words,
     lyrics_are_not_in_allowed_language,
+    title_contains_query,
 )
 from lyrics_search.normalize import (
     LYRICS_CRUFT_REGEX,
@@ -237,6 +238,7 @@ def search_and_filter(
 def filter_track_infos(
     query,
     track_infos,
+    no_query_in_title=False,
     languages=DEFAULT_ALLOWED_LANGUAGES,
     banned_words=DEFAULT_BANNED_WORDS,
 ):
@@ -314,6 +316,11 @@ def filter_track_infos(
                 query, artist_name
             ),
         }
+
+        if no_query_in_title:
+            filters["title_contains_query"] = title_contains_query(
+                query.lower(), track_name
+            )
 
         if not any(filters.values()):
             filtered_track_infos.append(track_info)

@@ -24,6 +24,7 @@ def do_lyrics_search(
     no_create_playlist,
     fast,
     deep,
+    no_query_in_title,
 ):
     normalized_query = normalize_query(query)
     output_path = (
@@ -39,7 +40,10 @@ def do_lyrics_search(
             output_path=DEFAULT_RESULTS_PATH,
         )
         musixmatch_results = musixmatch.filter_track_infos(
-            query, all_track_infos, languages=languages
+            query,
+            all_track_infos,
+            languages=languages,
+            no_query_in_title=no_query_in_title,
         )
     elif backend == "spotify":
         spotify_results = spotify.search_and_filter(

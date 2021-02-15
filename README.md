@@ -24,6 +24,10 @@ This has found a song for each word in the sentence (and the exclamation point) 
 
 Results are cached at several stages on-disk to avoid hitting the API more than necessary. None of that is distributed in the repo though.
 
+### How it Works
+
+
+
 
 ## Lyrics Search
 

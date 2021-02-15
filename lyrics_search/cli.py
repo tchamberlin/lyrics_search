@@ -14,6 +14,7 @@ def parse_args():
     )
     parser.add_argument("query")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--no-query-in-title", action="store_true")
     parser.add_argument(
         "-f",
         "--frontends",
@@ -85,6 +86,7 @@ def main():
             no_create_playlist=args.no_create_playlist,
             fast=not args.debug,
             deep=args.deep,
+            no_query_in_title=args.no_query_in_title,
         )
     except Exception as error:
         if args.verbosity > 1:

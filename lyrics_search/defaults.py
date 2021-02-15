@@ -6,7 +6,7 @@ DEFAULT_BANNED_WORDS = [
     "instrumental",
     "karaoke",
     "originally performed",
-    "(live)",
+    " - live" "(live)",
     "(skit)",
     "live in",
     "live at",
@@ -16,4 +16,5 @@ DEFAULT_BANNED_WORDS = [
 ]
 
 DEFAULT_PER_WORD_SOFT_RESULT_LIMIT = 1000
-DEFAULT_PER_WORD_HARD_RESULT_LIMIT = 10000
+DEFAULT_PER_WORD_HARD_RESULT_LIMIT = 5000
+DEFAULT_MAX_TRACKS_PER_WORD = 2
