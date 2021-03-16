@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument("query")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--allow-explicit", action="store_true")
+    # parser.add_argument("--deep", action="store_true")
     parser.add_argument("--no-api", action="store_true")
     parser.add_argument("--no-normalize-query", action="store_true")
     parser.add_argument(
@@ -210,10 +211,11 @@ def normalize_query(to_strip, decode=True):
     decoded = unidecode(to_strip) if decode else to_strip
     normalized = [expand_contraction(word) for word in WHITESPACE_REGEX.split(decoded)]
     englishified = [
-        INFLECT.number_to_words(int(word)) for word in normalized if word.isnumeric()
+        INFLECT.number_to_words(int(word)) if word.isnumeric() else word
+        for word in normalized
     ]
     recomposed = " ".join(englishified).strip()
-    if len(to_strip) > 1:
+    if len(recomposed) > 1:
         no_tail = recomposed[:-1] + INTER_WORD_PUNCTUATION.sub("", recomposed[-1])
     else:
         no_tail = recomposed

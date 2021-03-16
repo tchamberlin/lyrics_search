@@ -25,9 +25,10 @@ def parse_args():
     )
     parser.add_argument(
         "-b",
-        "--backend",
+        "--backends",
         choices=["musixmatch", "spotify"],
-        default="musixmatch",
+        default=["musixmatch"],
+        nargs="+",
         help="The service you would like to your query to be performed in",
     )
     parser.add_argument(
@@ -58,7 +59,7 @@ def parse_args():
     )
     parser.add_argument("--playlist-name")
     parser.add_argument(
-        "--no-create-playlist",
+        "--create-playlist",
         action="store_true",
         help="If given, no Spotify playlist will be created",
     )
@@ -79,11 +80,11 @@ def main():
             query=args.query,
             playlist_name=args.playlist_name,
             output_path=args.output,
-            backend=args.backend,
+            backends=args.backends,
             frontends=args.frontends,
             max_playlist_tracks=args.max_playlist_tracks,
             languages=args.languages,
-            no_create_playlist=args.no_create_playlist,
+            create_playlist=args.create_playlist,
             fast=not args.debug,
             deep=args.deep,
             no_query_in_title=args.no_query_in_title,

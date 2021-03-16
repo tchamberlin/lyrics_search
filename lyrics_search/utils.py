@@ -10,11 +10,11 @@ def chunks(lst, n):
         yield lst[i : i + n]
 
 
-def save_json(data, path):
+def save_json(data, path, indent=2):
     path.parent.mkdir(exist_ok=True)
     LOGGER.debug(f"Saving JSON to '{str(path)}'")
     with open(path, "w") as file:
-        json.dump(data, file, indent=2)
+        json.dump(data, file, indent=indent)
 
 
 def load_json(path):

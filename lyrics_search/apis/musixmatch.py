@@ -213,7 +213,7 @@ def search_and_filter(
         output_path / f"{normalized_query}_musixmatch_search_results.json"
     )
     if not musixmatch_search_results_json_path.exists():
-        LOGGER.debug(f"Searching MusixMatch for '{query}'...")
+        LOGGER.info(f"Searching MusixMatch for '{query}'...")
         track_infos = search_lyrics(
             query,
             max_pages=max_pages,
@@ -222,7 +222,7 @@ def search_and_filter(
         )
         save_json(track_infos, musixmatch_search_results_json_path)
     else:
-        LOGGER.debug(
+        LOGGER.info(
             "Skipping MusixMatch search; results are cached at "
             f"'{musixmatch_search_results_json_path}'"
         )
@@ -325,7 +325,7 @@ def filter_track_infos(
         if not any(filters.values()):
             filtered_track_infos.append(track_info)
         else:
-            LOGGER.info(
+            LOGGER.debug(
                 f"Filtered out artist:'{artist_name}' track:'{track_name}' due to: "
                 f"{[k for k, v in filters.items() if v]}"
             )
@@ -337,8 +337,8 @@ def remove_duplicates(query, track_infos):
     compressed = {}
     for track_info in track_infos:
         key = (track_info["artist"], track_info["clean_track"])
-        if key in compressed:
-            LOGGER.warning(f"Overwriting {compressed[key]=} with {track_info=}")
+        # if key in compressed:
+        #     LOGGER.warning(f"Overwriting {compressed[key]=} with {track_info=}")
 
         compressed[key] = track_info
 
