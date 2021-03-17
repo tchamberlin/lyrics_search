@@ -3,6 +3,7 @@ import logging
 import cld3
 
 from .defaults import DEFAULT_ALLOWED_LANGUAGES, DEFAULT_BANNED_WORDS
+from .utils import string_contains_word
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,8 +47,8 @@ def lyrics_are_not_in_allowed_language(lyrics, languages=DEFAULT_ALLOWED_LANGUAG
 
 
 def artist_name_contains_query(query, artist_name):
-    return query in artist_name
+    return string_contains_word(artist_name, query)
 
 
 def title_contains_query(query, title):
-    return query in title
+    return string_contains_word(title, query)

@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import re
 import string
 from collections import OrderedDict
 from datetime import datetime
@@ -185,7 +186,7 @@ def query_spotify_from_track_infos(track_infos, order_by=None):
     # is not true. However, it is prefereable doing it this way vs. getting a bunch of duplicate
     # results for the much more common case of the same song existing on multiple albums per artist
     to_query = {
-        (track_info["clean_artist"], track_info["clean_track"]): track_info
+        (track_info["clean_artist"], track_info["cleaned_track"]): track_info
         for track_info in track_infos
     }
     to_query = sorted(to_query.items(), key=lambda x: x[1]["score"], reverse=True)
@@ -315,6 +316,7 @@ def normalize_track_field(value):
 def filter_results(query, items, fast=True):
     filtered = []
     query = unidecode(query.lower())
+    query_word_regex = re.compile(r"\b" + query + r"\b")
     for item in items:
         track = unidecode(item["name"]).lower()
         album = unidecode(item["album"]["name"]).lower()
@@ -322,8 +324,9 @@ def filter_results(query, items, fast=True):
         clean_track = normalize_track_field(track)
 
         track_contains_query = (
-            query in clean_track
-            or fuzz.partial_token_sort_ratio(query, clean_track) > 85
+            bool(query_word_regex.match(clean_track))
+            # TODO: Why was this here? seems bad
+            # or fuzz.partial_token_sort_ratio(query, clean_track) > 85
         )
         filters = (
             (
@@ -461,7 +464,7 @@ def remove_duplicates(query, items):
                     do_add = True
 
             if do_add:
-                LOGGER.info(
+                LOGGER.debug(
                     f"Overwriting '{format_item(existing)}' (pop. {existing['popularity']}) "
                     f"with '{format_item(item)}' (pop. {item['popularity']})"
                 )

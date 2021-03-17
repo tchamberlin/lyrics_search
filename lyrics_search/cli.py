@@ -59,6 +59,11 @@ def parse_args():
     )
     parser.add_argument("--playlist-name")
     parser.add_argument(
+        "--no-strict",
+        action="store_true",
+        help="If given, the track title will NOT be required to contain the query",
+    )
+    parser.add_argument(
         "--create-playlist",
         action="store_true",
         help="If given, no Spotify playlist will be created",
@@ -88,6 +93,7 @@ def main():
             fast=not args.debug,
             deep=args.deep,
             no_query_in_title=args.no_query_in_title,
+            require_title_contains_query=not args.no_strict,
         )
     except Exception as error:
         if args.verbosity > 1:

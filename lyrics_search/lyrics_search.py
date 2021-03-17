@@ -1,6 +1,4 @@
 import logging
-import re
-from pathlib import Path
 
 from tqdm import tqdm
 
@@ -9,9 +7,6 @@ from lyrics_search.defaults import DEFAULT_RESULTS_PATH
 from lyrics_search.utils import load_json, normalize_query, save_json
 
 LOGGER = logging.getLogger(__name__)
-PARENTHETICAL_REGEX = re.compile(r"(\[.*\])?(\{.*\})?(\<.*\>)?(\(.*\))?")
-WHITESPACE_REGEX = re.compile(r"[^\w#\'\"]")
-LYRICS_CRUFT_REGEX = re.compile(r"\*+.*\*+\s+\(\d+\)")
 
 
 def do_lyrics_search(
@@ -26,6 +21,7 @@ def do_lyrics_search(
     fast,
     deep,
     no_query_in_title,
+    require_title_contains_query,
 ):
     unsupported_backends = set(backends).difference({"musixmatch", "spotify"})
     if unsupported_backends:
@@ -35,20 +31,17 @@ def do_lyrics_search(
     output_path = (
         output_path if output_path else DEFAULT_RESULTS_PATH / normalized_query
     )
-    all_track_infos = None
+    LOGGER.info(f"Writing output to {output_path}")
     if "musixmatch" in backends:
-        all_track_infos = musixmatch.search_and_filter(
+        musixmatch_results = musixmatch.search_and_filter(
             query,
             page=1,
             page_size=100,
             max_pages=50,
-            output_path=DEFAULT_RESULTS_PATH,
-        )
-        musixmatch_results = musixmatch.filter_track_infos(
-            query,
-            all_track_infos,
-            languages=languages,
-            no_query_in_title=no_query_in_title,
+            require_title_contains_query=require_title_contains_query,
+            output_path=output_path,
+            # TODO: Do we need a separate arg for this? Currently used for Spotify too
+            get_lyrics=deep,
         )
     spotify_results = []
     if "spotify" in backends:
@@ -65,8 +58,8 @@ def do_lyrics_search(
         )
     if "spotify" in frontends:
         playlist_name = playlist_name if playlist_name else f"{normalized_query}_raw"
-        musixmatch_to_spotify_results_path = Path(
-            f"{normalized_query}_musixmatch_to_spotify.json"
+        musixmatch_to_spotify_results_path = (
+            output_path / f"{normalized_query}_musixmatch_to_spotify.json"
         )
         if "musixmatch" in backends:
             if musixmatch_to_spotify_results_path.exists():
@@ -94,6 +87,8 @@ def do_lyrics_search(
         spotify_results = sorted(
             spotify_results, key=lambda x: x["popularity"], reverse=True
         )
+        # Now we "bin" the results into 3 bins
+        # 1. Exact matches
         for sr in [
             _sr
             for _sr in spotify_results
@@ -102,6 +97,7 @@ def do_lyrics_search(
             if sr["id"] not in track_ids:
                 track_ids.append(sr["id"])
 
+        # 2. Substring matches
         for sr in [
             _sr
             for _sr in spotify_results
@@ -110,6 +106,7 @@ def do_lyrics_search(
             if sr["id"] not in track_ids:
                 track_ids.append(sr["id"])
 
+        # 3. No match in title at all (but is in lyrics, presumably)
         for sr in [
             _sr
             for _sr in spotify_results

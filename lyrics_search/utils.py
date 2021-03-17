@@ -1,5 +1,8 @@
 import json
 import logging
+import re
+
+from .normalize import WHITESPACE_REGEX
 
 LOGGER = logging.getLogger(__name__)
 
@@ -12,20 +15,24 @@ def chunks(lst, n):
 
 def save_json(data, path, indent=2):
     path.parent.mkdir(exist_ok=True)
-    LOGGER.debug(f"Saving JSON to '{str(path)}'")
+    LOGGER.info(f"Saving JSON to '{str(path)}'")
     with open(path, "w") as file:
         json.dump(data, file, indent=indent)
 
 
 def load_json(path):
-    LOGGER.debug(f"Loading JSON from '{str(path)}'")
+    LOGGER.info(f"Loading JSON from '{str(path)}'")
     with open(path) as file:
         return json.load(file)
 
 
 # TODO: re.sub
-def normalize_query(query):
-    return query.replace(" ", "_")
+def normalize_query(query, lower=True):
+    normalized = WHITESPACE_REGEX.sub("_", query)
+    if lower:
+        normalized = normalized.lower()
+
+    return normalized
 
 
 # TODO: untested
@@ -74,3 +81,7 @@ def words_to_phrases(words):
         for window in slicer(words, i):
             phrases.append(window)
     return phrases
+
+
+def string_contains_word(string, word):
+    return bool(re.match(r"\b" + word + r"\b", string))
