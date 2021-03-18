@@ -157,15 +157,20 @@ def search_spotify_for_track(artist, track):
     results = SPOTIPY.search(q=query, limit=50)
     num_results = results["tracks"]["total"]
     LOGGER.debug(f"Found {num_results} results")
+    filtered_results = filter_results(track, results["tracks"]["items"])
+    if not filtered_results:
+        LOGGER.debug(f"After filtering, no results! Bailing out of query {query}")
+        return None
+
+    num_filtered_results = len(filtered_results)
 
     item = None
-    if num_results:
-        if num_results == 1:
+    if num_filtered_results:
+        if num_filtered_results == 1:
             item = results["tracks"]["items"][0]
             stub = "only track"
-        elif num_results > 1:
-            # TODO: Filter out live tracks, covers, etc.
-            item = sorted(results["tracks"]["items"], key=lambda x: x["popularity"])[-1]
+        elif num_filtered_results > 1:
+            item = sorted(filtered_results, key=lambda x: x["popularity"])[-1]
             stub = "most popular track"
         artists = [artist["name"] for artist in item["artists"]]
         LOGGER.debug(f"Added {stub} track '{item['name']}' by '{artists}' for {query=}")
@@ -180,13 +185,15 @@ def sort_playlist(playlist, key):
 
 def query_spotify_from_track_infos(track_infos, order_by=None):
     to_add = OrderedDict()
+    not_found = []
     # Create a set of each unique artist/track name pair. Use the "cleaned" track name (this
     # strips out things in parentheses, for example). This avoid unnecessecary duplicate queries
     # to spotify. NOTE: This obviously assumes that a given track title is unique per artist, which
     # is not true. However, it is prefereable doing it this way vs. getting a bunch of duplicate
     # results for the much more common case of the same song existing on multiple albums per artist
+    # TODO: De-dup elsewhere, with better explanation of what's going on in logs
     to_query = {
-        (track_info["clean_artist"], track_info["cleaned_track"]): track_info
+        (track_info["cleaned_artist"], track_info["cleaned_track"]): track_info
         for track_info in track_infos
     }
     to_query = sorted(to_query.items(), key=lambda x: x[1]["score"], reverse=True)
@@ -195,12 +202,14 @@ def query_spotify_from_track_infos(track_infos, order_by=None):
         item = search_spotify_for_track(artist, track)
         if item:
             to_add[item["id"]] = item
+        else:
+            not_found.append(track_info)
 
     if order_by:
         ret = order_by_key(to_add.values(), order_by)
     else:
         ret = to_add
-    return list(ret.values())
+    return list(ret.values()), not_found
 
 
 def create_playlist_description(query):

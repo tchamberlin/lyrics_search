@@ -74,13 +74,33 @@ def do_lyrics_search(
                 LOGGER.info(
                     f"Looking for {len(musixmatch_results)} MusixMatch results in Spotify"
                 )
-                musixmatch_to_spotify_results = spotify.query_spotify_from_track_infos(
+                (
+                    musixmatch_to_spotify_results,
+                    missing_tracks,
+                ) = spotify.query_spotify_from_track_infos(
                     track_infos=musixmatch_results,
                 )
                 save_json(
                     musixmatch_to_spotify_results, musixmatch_to_spotify_results_path
                 )
-
+                num_musixmatch_to_spotify_results = len(musixmatch_to_spotify_results)
+                num_musixmatch_results = len(musixmatch_results)
+                ratio_found = (
+                    num_musixmatch_to_spotify_results / num_musixmatch_results
+                    if num_musixmatch_results
+                    else 0
+                )
+                LOGGER.info(
+                    f"Found {num_musixmatch_to_spotify_results}/{num_musixmatch_results} tracks "
+                    f"in Spotify ({ratio_found:.0%})"
+                )
+                save_json(
+                    missing_tracks,
+                    (
+                        output_path
+                        / f"{normalized_query}_musixmatch_tracks_not_in_spotify.json"
+                    ),
+                )
             spotify_results.extend(musixmatch_to_spotify_results)
 
         track_ids = []
@@ -114,6 +134,7 @@ def do_lyrics_search(
         ]:
             if sr["id"] not in track_ids:
                 track_ids.append(sr["id"])
+
         if create_playlist:
             spotify.create_spotify_playlist(
                 query=query,

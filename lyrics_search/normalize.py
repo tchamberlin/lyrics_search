@@ -8,22 +8,22 @@ WHITESPACE_REGEX = re.compile(r"[^\w#\'\"]")
 LYRICS_CRUFT_REGEX = re.compile(r"\*+.*\*+\s+\(\d+\)")
 
 
-def clean_track(track):
+def clean_track_field(value):
     """Clean the given track name.
 
     1. Remove parenthetical statements (e.g. remove bracketed text from "track name [cover by foo]")
     2. Remove featured artists from track name (e.g. "feat. FOO")
     """
 
-    clean_track = PARENTHETICAL_REGEX.sub("", track).strip()
+    clean_value = PARENTHETICAL_REGEX.sub("", value).strip()
     try:
-        feat_start = clean_track.lower().index("feat.")
+        feat_start = clean_value.lower().index("feat.")
     except ValueError:
         pass
     else:
-        clean_track = clean_track[:feat_start].strip()
+        clean_value = clean_value[:feat_start].strip()
 
-    if track != clean_track:
-        LOGGER.debug(f"Cleaned {track=} to {clean_track=}")
+    if value != clean_value:
+        LOGGER.debug(f"Cleaned {value=} to {clean_value=}")
 
-    return clean_track
+    return clean_value

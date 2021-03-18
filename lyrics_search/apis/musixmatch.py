@@ -16,7 +16,11 @@ from lyrics_search.filters import (
     lyrics_are_not_in_allowed_language,
     title_contains_query,
 )
-from lyrics_search.normalize import LYRICS_CRUFT_REGEX, WHITESPACE_REGEX, clean_track
+from lyrics_search.normalize import (
+    LYRICS_CRUFT_REGEX,
+    WHITESPACE_REGEX,
+    clean_track_field,
+)
 from lyrics_search.utils import load_json, normalize_query, save_json
 
 LOGGER = logging.getLogger(__name__)
@@ -78,7 +82,10 @@ def get_track_info(query, track, get_lyrics=False):
     }
     if not track_info["album"]:
         track_info["album"] = ""
-    track_info["cleaned_track"] = clean_track(track_info["track"])
+
+    track_info["cleaned_track"] = clean_track_field(track_info["track"])
+    track_info["cleaned_artist"] = clean_track_field(track_info["artist"])
+    track_info["cleaned_album"] = clean_track_field(track_info["album"])
     if get_lyrics:
         lyrics = get_lyrics_for_track(track_info["track_id"])
         track_info["lyrics"] = lyrics
