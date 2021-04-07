@@ -325,7 +325,7 @@ def normalize_track_field(value):
 def filter_results(query, items, fast=True):
     filtered = []
     query = unidecode(query.lower())
-    query_word_regex = re.compile(r"\b" + query + r"\b")
+    query_word_regex = re.compile(r"\b" + re.escape(query) + r"\b")
     for item in items:
         track = unidecode(item["name"]).lower()
         album = unidecode(item["album"]["name"]).lower()
