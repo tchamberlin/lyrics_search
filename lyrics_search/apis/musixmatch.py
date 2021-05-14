@@ -139,7 +139,8 @@ def get_track_infos_from_track_list(query, track_list, get_lyrics=False):
 def get_track_results_page(query, page, page_size):
     query_dict = {
         "q_lyrics": query,
-        "f_has_lyrics": True,
+        "q_track": query,
+        # "f_has_lyrics": True,
         "page": page,
         "page_size": page_size,
         "apikey": MUSIXMATCH_API_KEY,
@@ -194,7 +195,13 @@ def get_tracks_for_query(
     # Set the first page's results as the start of our full track_list
     track_list = track_list_for_page
     for current_page in tqdm(range(2, actual_num_pages + 1), unit="page"):
-        track_list_for_page, __ = get_track_results_page(query, current_page, page_size)
+        try:
+            track_list_for_page, __ = get_track_results_page(
+                query, current_page, page_size
+            )
+        except ValueError:
+            LOGGER.exception("uh oh")
+            continue
 
         tqdm.write(
             f"Found {len(track_list_for_page)} tracks in iteration "
