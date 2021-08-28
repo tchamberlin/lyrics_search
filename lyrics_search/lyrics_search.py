@@ -9,7 +9,7 @@ from lyrics_search.utils import load_json, normalize_query, save_json
 LOGGER = logging.getLogger(__name__)
 
 
-def do_lyrics_search(
+def _do_lyrics_search(
     query,
     playlist_name,
     output_path,
@@ -57,7 +57,6 @@ def do_lyrics_search(
             " was not given! You must provide --spotify in order to create this file"
         )
     if "spotify" in frontends:
-        playlist_name = playlist_name if playlist_name else f"{normalized_query}_raw"
         musixmatch_to_spotify_results_path = (
             output_path / f"{normalized_query}_musixmatch_to_spotify.json"
         )
@@ -135,16 +134,58 @@ def do_lyrics_search(
             if sr["id"] not in track_ids:
                 track_ids.append(sr["id"])
 
-        if create_playlist:
-            spotify.create_spotify_playlist(
-                query=query,
-                playlist_name=playlist_name,
-                track_ids=track_ids[:max_playlist_tracks]
-                if max_playlist_tracks
-                else track_ids,
-                replace_existing=True,
+    return track_ids
+
+
+def do_lyrics_search(
+    queries,
+    playlist_name,
+    output_path,
+    frontends,
+    backends,
+    max_playlist_tracks,
+    languages,
+    create_playlist,
+    fast,
+    deep,
+    no_query_in_title,
+    require_title_contains_query,
+):
+    # Default playlist name is the normalized form of the first query
+    playlist_name = (
+        playlist_name if playlist_name else f"{normalize_query(queries[0])}_raw"
+    )
+
+    track_ids = sorted(
+        set(
+            track_id
+            for query in queries
+            for track_id in _do_lyrics_search(
+                query,
+                playlist_name,
+                output_path,
+                frontends,
+                backends,
+                max_playlist_tracks,
+                languages,
+                create_playlist,
+                fast,
+                deep,
+                no_query_in_title,
+                require_title_contains_query,
             )
-        else:
-            LOGGER.info(
-                f"Not creating playlist '{playlist_name}' ({len(spotify_results)} tracks)"
-            )
+        )
+    )
+    if create_playlist:
+        spotify.create_spotify_playlist(
+            query=queries[0],
+            playlist_name=playlist_name,
+            track_ids=track_ids[:max_playlist_tracks]
+            if max_playlist_tracks
+            else track_ids,
+            replace_existing=True,
+        )
+    else:
+        LOGGER.info(
+            f"Not creating playlist '{playlist_name}' ({len(track_ids)} tracks)"
+        )

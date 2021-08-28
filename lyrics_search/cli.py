@@ -3,9 +3,13 @@ import logging
 import sys
 from pathlib import Path
 
+import inflect
+
 from lyrics_search.defaults import DEFAULT_ALLOWED_LANGUAGES, DEFAULT_RESULTS_PATH
 from lyrics_search.handlers import TqdmLoggingHandler
 from lyrics_search.lyrics_search import do_lyrics_search
+
+inflecter = inflect.engine()
 
 
 def parse_args():
@@ -68,7 +72,30 @@ def parse_args():
         action="store_true",
         help="If given, no Spotify playlist will be created",
     )
+    parser.add_argument(
+        "--exact",
+        action="store_true",
+        help="If given, don't search for additional lemmas/plurals of give word(s)",
+    )
     return parser.parse_args()
+
+
+def get_all_lemmas(word):
+    # Flatten the values we get from getAllLemmas into a single-level list
+    return [lemma for lemmas in getAllLemmas(word).values() for lemma in lemmas]
+
+
+def get_all_inflections(word):
+    [lemma for lemmas in getAllLemmas(word).values() for lemma in lemmas]
+    return [
+        inflection
+        for inflections in getAllInflections(lemma)
+        for inflection in inflections
+    ]
+
+
+def get_plurals(word):
+    return sorted(set((word, inflecter.plural(word))))
 
 
 def main():
@@ -80,9 +107,14 @@ def main():
     else:
         init_logging(logging.WARNING)
 
+    if not args.exact:
+        queries = get_plurals(args.query)
+        print(f"Pluralized query to: {queries}")
+    else:
+        queries = [args.query]
     try:
         do_lyrics_search(
-            query=args.query,
+            queries=queries,
             playlist_name=args.playlist_name,
             output_path=args.output,
             backends=args.backends,
